@@ -11,3 +11,7 @@ hello.py
 # Virtual environments
 .venv
 .env
+
+
+.streamlit/secrets.toml
+.DS_Store
