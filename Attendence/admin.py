@@ -10,7 +10,6 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
-
 # ---------- SETUP ----------
 def setup_clients():
     supabase = create_supabase_client()
@@ -18,7 +17,6 @@ def setup_clients():
     admin_user = get_env("ADMIN_USERNAME")
     admin_password = get_env("ADMIN_PASSWORD")
     return supabase, gh, repo, admin_user, admin_password
-
 
 # ---------- AUTH ----------
 def admin_login(admin_user, admin_password):
@@ -36,12 +34,11 @@ def admin_login(admin_user, admin_password):
         if submitted:
             if username == admin_user and password == admin_password:
                 st.session_state["admin_logged_in"] = True
-                st.rerun()
+                st.experimental_rerun()
             else:
                 st.error("Invalid credentials")
 
     st.stop()
-
 
 # ---------- SIDEBAR ----------
 def sidebar_controls(supabase):
@@ -50,7 +47,7 @@ def sidebar_controls(supabase):
             st.markdown("## Create Class")
             class_input = st.text_input("New Class Name")
 
-            if st.button("Add Class") and class_input.strip():
+            if st.button("Add Class", key="add_class_btn") and class_input.strip():
                 exists = (
                     supabase.table("classroom_settings")
                     .select("*")
@@ -71,30 +68,30 @@ def sidebar_controls(supabase):
                         }
                     ).execute()
                     st.success(f"Class '{class_input}' added.")
-                    st.rerun()
+                    st.experimental_rerun()
 
-            if st.button("Logout"):
+            if st.button("Logout", key="logout_btn"):
                 st.session_state["admin_logged_in"] = False
-                st.rerun()
+                st.experimental_rerun()
 
             st.markdown("## Delete Class")
-            delete_target = st.text_input("Class Name to Delete")
+            delete_target = st.text_input("Class Name to Delete", key="delete_input")
+            confirm = st.text_input("Type 'DELETE' to confirm", key="confirm_delete_input")
 
-            if st.button("Delete Class") and delete_target.strip():
-                confirm = st.text_input("Type 'DELETE' to confirm")
+            if st.button("Delete Class", key="delete_class_btn") and delete_target.strip():
                 if confirm == "DELETE":
                     for table in ["attendance", "roll_map", "classroom_settings"]:
                         supabase.table(table).delete().eq(
                             "class_name", delete_target
                         ).execute()
-
                     st.success(f"Class '{delete_target}' deleted.")
-                    st.rerun()
+                    st.experimental_rerun()
+                else:
+                    st.warning("Type 'DELETE' to confirm deletion.")
 
     except Exception as e:
         logger.exception("Sidebar error")
         st.error("An error occurred.")
-
 
 # ---------- CLASS CONTROLS ----------
 def class_controls(supabase):
@@ -110,7 +107,9 @@ def class_controls(supabase):
         st.stop()
 
     selected_class = st.selectbox(
-        "Select Class", [c["class_name"] for c in classes]
+        "Select Class",
+        [c["class_name"] for c in classes],
+        key="select_class"
     )
 
     config = next((c for c in classes if c["class_name"] == selected_class), None)
@@ -122,57 +121,48 @@ def class_controls(supabase):
     st.markdown(f"**Daily Limit:** {config['daily_limit']}")
 
     is_open = config.get("is_open", False)
-    other_open = [
-        c["class_name"]
-        for c in classes
-        if c.get("is_open") and c["class_name"] != selected_class
-    ]
+    other_open = [c["class_name"] for c in classes if c.get("is_open") and c["class_name"] != selected_class]
 
     st.subheader("Attendance Controls")
     st.info(f"Status: {'Open' if is_open else 'Closed'}")
 
     col1, col2 = st.columns(2)
 
+    # Open Attendance
     with col1:
-        if st.button("Open Attendance") and not other_open:
-            supabase.table("classroom_settings").update(
-                {"is_open": True}
-            ).eq("class_name", selected_class).execute()
-            st.rerun()
-        elif other_open:
-            st.warning(f"Already open: {', '.join(other_open)}")
+        if st.button("Open Attendance", key="open_attendance_btn"):
+            if other_open:
+                st.warning(f"Cannot open. Already open: {', '.join(other_open)}")
+            else:
+                # Optional: close all other classes automatically
+                supabase.table("classroom_settings").update({"is_open": False}).neq("class_name", selected_class).execute()
+                supabase.table("classroom_settings").update({"is_open": True}).eq("class_name", selected_class).execute()
+                st.success(f"Attendance for '{selected_class}' is now OPEN.")
+                st.experimental_rerun()
 
+    # Close Attendance
     with col2:
-        if st.button("Close Attendance"):
-            supabase.table("classroom_settings").update(
-                {"is_open": False}
-            ).eq("class_name", selected_class).execute()
-            st.rerun()
+        if st.button("Close Attendance", key="close_attendance_btn"):
+            supabase.table("classroom_settings").update({"is_open": False}).eq("class_name", selected_class).execute()
+            st.success(f"Attendance for '{selected_class}' is now CLOSED.")
+            st.experimental_rerun()
 
+    # Update Settings
     with st.expander("Update Settings"):
-        new_code = st.text_input("New Code", value=config["code"])
-        new_limit = st.number_input("Daily Limit", min_value=1, value=config["daily_limit"])
+        new_code = st.text_input("New Code", value=config["code"], key="new_code_input")
+        new_limit = st.number_input("Daily Limit", min_value=1, value=config["daily_limit"], key="new_limit_input")
 
-        if st.button("Save Settings"):
-            supabase.table("classroom_settings").update(
-                {"code": new_code, "daily_limit": new_limit}
-            ).eq("class_name", selected_class).execute()
-            st.success("Updated.")
-            st.rerun()
+        if st.button("Save Settings", key="save_settings_btn"):
+            supabase.table("classroom_settings").update({"code": new_code, "daily_limit": new_limit}).eq("class_name", selected_class).execute()
+            st.success("Class settings updated.")
+            st.experimental_rerun()
 
     return selected_class
-
 
 # ---------- MATRIX ----------
 def show_matrix_and_push(supabase, repo, selected_class):
     try:
-        records = (
-            supabase.table("attendance")
-            .select("*")
-            .eq("class_name", selected_class)
-            .execute()
-            .data
-        )
+        records = supabase.table("attendance").select("*").eq("class_name", selected_class).execute().data
     except Exception:
         logger.exception("Attendance fetch failed")
         st.error("Could not fetch records.")
@@ -193,7 +183,7 @@ def show_matrix_and_push(supabase, repo, selected_class):
         fill_value="A",
     )
 
-    st.dataframe(pivot_df, use_container_width=True)
+    st.dataframe(pivot_df, width="stretch")
 
     st.download_button(
         "Download Attendance CSV",
@@ -202,7 +192,7 @@ def show_matrix_and_push(supabase, repo, selected_class):
         "text/csv",
     )
 
-    if not st.button("Push to GitHub"):
+    if not st.button("Push to GitHub", key="push_github_btn"):
         return
 
     if repo is None:
@@ -228,7 +218,6 @@ def show_matrix_and_push(supabase, repo, selected_class):
     except Exception:
         logger.exception("GitHub push failed")
         st.error("Push failed.")
-
 
 # ---------- MAIN ----------
 def show_admin_panel():
